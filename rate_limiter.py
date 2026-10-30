@@ -16,6 +16,8 @@ class Limits:
 
 
 REGULAR_LIMITS = Limits(5, timedelta(seconds=10), 20, timedelta(minutes=1))
+NEW_ACCOUNT_LIMITS = Limits(2, timedelta(seconds=10), 10, timedelta(minutes=1))
+NEW_ACCOUNT_AGE = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,15 @@ class RateLimiter:
     Не потокобезопасен.
     """
 
-    def __init__(self, regular: Limits = REGULAR_LIMITS) -> None:
+    def __init__(
+        self,
+        regular: Limits = REGULAR_LIMITS,
+        new_account: Limits = NEW_ACCOUNT_LIMITS,
+        new_account_age: timedelta = NEW_ACCOUNT_AGE,
+    ) -> None:
         self._regular = regular
+        self._new_account = new_account
+        self._new_account_age = new_account_age
         self._logs: dict[str, deque[tuple[datetime, str]]] = {}
 
     def try_acquire(
@@ -54,12 +63,30 @@ class RateLimiter:
         Отказанное сообщение в лимит не засчитывается.
         """
         log = self._logs.get(user_id, deque())
-        wait = _wait_under(self._regular, log, chat_id, now)
+        wait = self._wait(log, chat_id, account_created_at, now)
         if wait > timedelta(0):
             return Decision(False, wait.total_seconds())
         log.append((now, chat_id))
         self._logs[user_id] = log
         return Decision(True, 0.0)
+
+    def _wait(
+        self,
+        log: deque[tuple[datetime, str]],
+        chat_id: str,
+        account_created_at: datetime,
+        now: datetime,
+    ) -> timedelta:
+        becomes_regular_at = account_created_at + self._new_account_age
+        if now >= becomes_regular_at:
+            return _wait_under(self._regular, log, chat_id, now)
+        wait = _wait_under(self._new_account, log, chat_id, now)
+        if now + wait < becomes_regular_at:
+            return wait
+        # Подсказка учитывает переход через 24 ч: после него действуют обычные лимиты.
+        return max(
+            becomes_regular_at - now, _wait_under(self._regular, log, chat_id, now)
+        )
 
 
 def _wait_under(
