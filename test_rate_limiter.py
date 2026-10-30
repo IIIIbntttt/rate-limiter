@@ -215,3 +215,44 @@ def test_state_lives_in_limiter_instance():
     assert send(first, "chat", at(5)).allowed is False
 
     assert send(second, "chat", at(5)) == ALLOWED
+
+
+def test_custom_limits_are_applied():
+    limiter = RateLimiter(
+        regular=Limits(1, timedelta(seconds=10), 20, timedelta(seconds=60))
+    )
+
+    assert send(limiter, "chat", at(0)) == ALLOWED
+    assert send(limiter, "chat", at(1)) == Decision(False, 9.0)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"per_chat": 0}, "per_chat and total must be at least 1"),
+        ({"total": 0}, "per_chat and total must be at least 1"),
+        (
+            {"chat_window": timedelta(0)},
+            "chat_window and total_window must be positive",
+        ),
+        (
+            {"total_window": timedelta(seconds=-1)},
+            "chat_window and total_window must be positive",
+        ),
+    ],
+)
+def test_invalid_limits_raise(override, message):
+    valid = {
+        "per_chat": 5,
+        "chat_window": timedelta(seconds=10),
+        "total": 20,
+        "total_window": timedelta(seconds=60),
+    }
+
+    with pytest.raises(ValueError, match=message):
+        Limits(**valid | override)
+
+
+def test_negative_new_account_age_raises():
+    with pytest.raises(ValueError, match="new_account_age must not be negative"):
+        RateLimiter(new_account_age=timedelta(seconds=-1))

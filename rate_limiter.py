@@ -14,6 +14,12 @@ class Limits:
     total: int
     total_window: timedelta
 
+    def __post_init__(self) -> None:
+        if self.per_chat < 1 or self.total < 1:
+            raise ValueError("per_chat and total must be at least 1")
+        if self.chat_window <= timedelta(0) or self.total_window <= timedelta(0):
+            raise ValueError("chat_window and total_window must be positive")
+
 
 REGULAR_LIMITS = Limits(5, timedelta(seconds=10), 20, timedelta(minutes=1))
 NEW_ACCOUNT_LIMITS = Limits(2, timedelta(seconds=10), 10, timedelta(minutes=1))
@@ -45,6 +51,8 @@ class RateLimiter:
         new_account: Limits = NEW_ACCOUNT_LIMITS,
         new_account_age: timedelta = NEW_ACCOUNT_AGE,
     ) -> None:
+        if new_account_age < timedelta(0):
+            raise ValueError("new_account_age must not be negative")
         self._regular = regular
         self._new_account = new_account
         self._new_account_age = new_account_age
