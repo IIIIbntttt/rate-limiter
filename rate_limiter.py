@@ -2,7 +2,7 @@
 
 from collections import OrderedDict, deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,7 @@ class RateLimiter:
         self._regular = regular
         self._new_account = new_account
         self._new_account_age = new_account_age
+        # Журнал за самое длинное окно обоих уровней целиком покрывает и окно чата.
         self._retention = max(
             regular.chat_window,
             regular.total_window,
@@ -78,6 +79,8 @@ class RateLimiter:
         Отказанное в лимит не засчитывается. Бросает ValueError, если now раньше
         последнего принятого сообщения этого пользователя.
         """
+        now = _to_utc(now)
+        account_created_at = _to_utc(account_created_at)
         known = self._logs.get(user_id)
         if known and now < known[-1][0]:
             raise ValueError(
@@ -115,6 +118,11 @@ class RateLimiter:
         return max(
             becomes_regular_at - now, _wait_under(self._regular, log, chat_id, now)
         )
+
+
+def _to_utc(moment: datetime) -> datetime:
+    # С одним tzinfo Python сравняет по настенным часам: на переводе часов окна врут.
+    return moment if moment.utcoffset() is None else moment.astimezone(UTC)
 
 
 def _wait_under(

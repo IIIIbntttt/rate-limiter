@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
@@ -293,3 +294,100 @@ def test_active_user_moves_behind_older_users_in_forgetting_order():
     send(limiter, "chat", at(95), user="carol")
 
     assert list(limiter._logs) == ["alice", "carol"]
+
+
+@pytest.fixture
+def berlin():
+    try:
+        return ZoneInfo("Europe/Berlin")
+    except ZoneInfoNotFoundError:
+        pytest.skip("нет базы часовых поясов")
+
+
+def test_spring_clock_change_does_not_reset_chat_window(berlin):
+    limiter = RateLimiter()
+    for second in range(55, 60):
+        now = datetime(2026, 3, 29, 1, 59, second, tzinfo=berlin)
+        assert send(limiter, "chat", now) == ALLOWED
+
+    # 03:00:00 по летнему времени это 01:00:00 UTC, всего 5 с после первого
+    sixth = datetime(2026, 3, 29, 3, 0, 0, tzinfo=berlin)
+    assert send(limiter, "chat", sixth) == Decision(False, 5.0)
+
+
+def test_autumn_clock_change_does_not_make_time_go_backwards(berlin):
+    limiter = RateLimiter()
+    first = datetime(2026, 10, 25, 2, 30, tzinfo=berlin, fold=0)
+    second = datetime(2026, 10, 25, 2, 10, tzinfo=berlin, fold=1)
+
+    assert send(limiter, "chat", first) == ALLOWED
+    assert send(limiter, "chat", second) == ALLOWED
+
+
+def test_account_age_counts_real_hours_across_clock_change(berlin):
+    limiter = RateLimiter()
+    created = datetime(2026, 3, 28, 12, 0, tzinfo=berlin)
+    results = [
+        send(
+            limiter,
+            "chat",
+            datetime(2026, 3, 29, 12, 0, second, tzinfo=berlin),
+            created=created,
+        )
+        for second in range(3)
+    ]
+
+    assert results == [ALLOWED, ALLOWED, Decision(False, 8.0)]
+
+
+def test_mixing_naive_and_aware_datetimes_raises_type_error():
+    limiter = RateLimiter()
+
+    with pytest.raises(TypeError):
+        limiter.try_acquire(
+            "alice", "chat", account_created_at=OLD, now=datetime(2026, 1, 1)
+        )
+
+
+@pytest.mark.parametrize(
+    ("regular_total_window", "new_total_window", "created"),
+    [
+        (120, 60, OLD),
+        (60, 120, T0 - HOUR),
+    ],
+)
+def test_log_covers_longest_window_of_both_levels(
+    regular_total_window, new_total_window, created
+):
+    seconds = timedelta(seconds=1)
+    limiter = RateLimiter(
+        regular=Limits(5, 10 * seconds, 3, regular_total_window * seconds),
+        new_account=Limits(5, 10 * seconds, 3, new_total_window * seconds),
+    )
+    for t in range(3):
+        assert send(limiter, "chat", at(t), created=created) == ALLOWED
+
+    assert send(limiter, "chat", at(100), created=created) == Decision(False, 20.0)
+
+
+def test_wait_when_strict_window_opens_exactly_at_turning_24_hours():
+    limiter = RateLimiter(
+        regular=Limits(2, timedelta(seconds=10), 10, timedelta(seconds=60)),
+        new_account=Limits(5, timedelta(seconds=10), 20, timedelta(seconds=60)),
+    )
+    created = at(10) - DAY
+    for t in range(5):
+        assert send(limiter, "chat", at(t), created=created) == ALLOWED
+
+    assert send(limiter, "chat", at(4.5), created=created) == Decision(False, 8.5)
+
+
+def test_naive_datetimes_are_used_as_given():
+    limiter = RateLimiter()
+    created = OLD.replace(tzinfo=None)
+    results = [
+        send(limiter, "chat", at(t).replace(tzinfo=None), created=created)
+        for t in range(6)
+    ]
+
+    assert results == [ALLOWED] * 5 + [Decision(False, 5.0)]
