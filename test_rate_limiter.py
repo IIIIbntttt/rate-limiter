@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from rate_limiter import Decision, RateLimiter
 
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
@@ -65,3 +67,31 @@ def test_chats_are_limited_separately():
         send(limiter, "chat-a", at(t))
 
     assert send(limiter, "chat-b", at(5)) == ALLOWED
+
+
+def test_twenty_first_message_across_five_chats_is_rejected_by_total_limit():
+    limiter = RateLimiter()
+    for i in range(20):
+        assert (
+            send(limiter, f"chat-{i // 5}", at(10 * (i // 5) + 2 * (i % 5))) == ALLOWED
+        )
+
+    assert send(limiter, "chat-4", at(40)) == Decision(False, 20.0)
+
+
+@pytest.mark.parametrize(
+    ("burst_start", "attempt", "expected_wait"),
+    [
+        (30, 35, 25.0),  # общий лимит ждёт дольше
+        (55, 59.5, 5.5),  # лимит чата ждёт дольше
+    ],
+)
+def test_when_both_limits_hit_returns_longer_wait(burst_start, attempt, expected_wait):
+    limiter = RateLimiter()
+    for chat, start in (("a", 0), ("b", 5), ("c", 10)):
+        for t in range(start, start + 5):
+            send(limiter, chat, at(t))
+    for t in range(burst_start, burst_start + 5):
+        send(limiter, "x", at(t))
+
+    assert send(limiter, "x", at(attempt)) == Decision(False, expected_wait)

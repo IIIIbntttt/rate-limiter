@@ -69,7 +69,11 @@ def _wait_under(
     chat_times = [
         t for t, chat in log if chat == chat_id and t > now - limits.chat_window
     ]
-    return _wait_for(chat_times, limits.per_chat, limits.chat_window, now)
+    total_times = [t for t, _ in log if t > now - limits.total_window]
+    return max(
+        _wait_for(chat_times, limits.per_chat, limits.chat_window, now),
+        _wait_for(total_times, limits.total, limits.total_window, now),
+    )
 
 
 def _wait_for(
