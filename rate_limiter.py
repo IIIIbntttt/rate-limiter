@@ -68,9 +68,14 @@ class RateLimiter:
     ) -> Decision:
         """Пропускает сообщение и засчитывает его либо отказывает с подсказкой.
 
-        Отказанное сообщение в лимит не засчитывается.
+        Отказанное сообщение в лимит не засчитывается. Бросает ValueError, если now
+        раньше последнего принятого сообщения этого пользователя.
         """
         log = self._logs.get(user_id, deque())
+        if log and now < log[-1][0]:
+            raise ValueError(
+                "now is earlier than the last accepted message of this user"
+            )
         wait = self._wait(log, chat_id, account_created_at, now)
         if wait > timedelta(0):
             return Decision(False, wait.total_seconds())

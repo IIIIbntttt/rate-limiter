@@ -256,3 +256,11 @@ def test_invalid_limits_raise(override, message):
 def test_negative_new_account_age_raises():
     with pytest.raises(ValueError, match="new_account_age must not be negative"):
         RateLimiter(new_account_age=timedelta(seconds=-1))
+
+
+def test_time_going_backwards_for_user_raises():
+    limiter = RateLimiter()
+    send(limiter, "chat", at(5))
+
+    with pytest.raises(ValueError, match="now is earlier than the last accepted"):
+        send(limiter, "chat", at(4))
