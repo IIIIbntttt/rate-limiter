@@ -84,8 +84,10 @@ def test_twenty_first_message_across_five_chats_is_rejected_by_total_limit():
 @pytest.mark.parametrize(
     ("burst_start", "attempt", "expected_wait"),
     [
-        (30, 35, 25.0),  # общий лимит ждёт дольше
-        (55, 59.5, 5.5),  # лимит чата ждёт дольше
+        # общий лимит ждёт дольше
+        (30, 35, 25.0),
+        # лимит чата ждёт дольше
+        (55, 59.5, 5.5),
     ],
 )
 def test_when_both_limits_hit_returns_longer_wait(burst_start, attempt, expected_wait):

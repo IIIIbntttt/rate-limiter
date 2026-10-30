@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 @dataclass(frozen=True)
 class Limits:
-    """Лимиты одного уровня: сколько сообщений пропускать за окно."""
+    """Лимиты уровня: per_chat за chat_window в чате, total за total_window всего."""
 
     per_chat: int
     chat_window: timedelta
@@ -31,7 +31,7 @@ class Decision:
     """Решение по сообщению.
 
     При отказе retry_after - секунды до первого момента, когда отправка пройдёт,
-    если пользователь больше ничего не отправит. При пропуске retry_after равен 0.0.
+    если пользователь больше ничего не отправит. При пропуске равен 0.0.
     """
 
     allowed: bool
@@ -39,11 +39,11 @@ class Decision:
 
 
 class RateLimiter:
-    """Решает, можно ли пользователю отправить сообщение, и засчитывает пропущенное.
+    """Решает, можно ли отправить сообщение, и засчитывает пропущенное.
 
-    Время приходит только параметром now, системные часы не читаются. Вызывающий
-    берёт now с часов сервера прямо в момент вызова: на этом держатся самоочистка
-    журналов и проверка порядка времени. Не потокобезопасен.
+    Системные часы не читаются: now передаёт вызывающий, с часов сервера и прямо
+    в момент вызова. На этом держатся самоочистка журналов и проверка порядка
+    времени. Не потокобезопасен.
     """
 
     def __init__(
@@ -57,14 +57,12 @@ class RateLimiter:
         self._regular = regular
         self._new_account = new_account
         self._new_account_age = new_account_age
-        # Журнал за самое длинное окно целиком покрывает и окно чата.
         self._retention = max(
             regular.chat_window,
             regular.total_window,
             new_account.chat_window,
             new_account.total_window,
         )
-        # Порядок ключей совпадает с порядком последней записи пользователя.
         self._logs: OrderedDict[str, deque[tuple[datetime, str]]] = OrderedDict()
 
     def try_acquire(
@@ -75,10 +73,10 @@ class RateLimiter:
         account_created_at: datetime,
         now: datetime,
     ) -> Decision:
-        """Пропускает сообщение и засчитывает его либо отказывает с подсказкой.
+        """Пропускает и засчитывает сообщение либо отказывает с подсказкой.
 
-        Отказанное сообщение в лимит не засчитывается. Бросает ValueError, если now
-        раньше последнего принятого сообщения этого пользователя.
+        Отказанное в лимит не засчитывается. Бросает ValueError, если now раньше
+        последнего принятого сообщения этого пользователя.
         """
         known = self._logs.get(user_id)
         if known and now < known[-1][0]:
@@ -86,7 +84,7 @@ class RateLimiter:
                 "now is earlier than the last accepted message of this user"
             )
         cutoff = now - self._retention
-        # Истёкшие пользователи лежат в голове: журнал с самой давней последней записью.
+        # Журналы идут по порядку последней записи, поэтому истёкшие лежат в голове.
         while self._logs and next(iter(self._logs.values()))[-1][0] <= cutoff:
             self._logs.popitem(last=False)
         log = self._logs.get(user_id, deque())
@@ -113,7 +111,7 @@ class RateLimiter:
         wait = _wait_under(self._new_account, log, chat_id, now)
         if now + wait < becomes_regular_at:
             return wait
-        # Подсказка учитывает переход через 24 ч: после него действуют обычные лимиты.
+        # Строгое ожидание выходит за переход через 24 ч: дальше считаем по обычным.
         return max(
             becomes_regular_at - now, _wait_under(self._regular, log, chat_id, now)
         )
@@ -122,7 +120,7 @@ class RateLimiter:
 def _wait_under(
     limits: Limits, log: deque[tuple[datetime, str]], chat_id: str, now: datetime
 ) -> timedelta:
-    # Граница окна не входит: запись из момента t перестаёт считаться ровно в t + window.
+    # Граница не входит: запись из момента t считается, пока now - t < window.
     chat_times = [
         t for t, chat in log if chat == chat_id and t > now - limits.chat_window
     ]
