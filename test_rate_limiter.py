@@ -166,3 +166,52 @@ def test_account_created_in_future_gets_new_account_limits():
     assert send(limiter, "chat", at(0), created=created) == ALLOWED
     assert send(limiter, "chat", at(1), created=created) == ALLOWED
     assert send(limiter, "chat", at(2), created=created) == Decision(False, 8.0)
+
+
+def test_rejected_message_is_not_counted():
+    limiter = RateLimiter()
+    for t in range(5):
+        send(limiter, "chat", at(t))
+    for t in range(5, 10):
+        assert send(limiter, "chat", at(t)).allowed is False
+
+    assert send(limiter, "chat", at(10)) == ALLOWED
+
+
+def test_users_do_not_affect_each_other():
+    limiter = RateLimiter()
+    for t in range(5):
+        send(limiter, "chat", at(t), user="alice")
+    assert send(limiter, "chat", at(5), user="alice").allowed is False
+
+    assert send(limiter, "chat", at(5), user="bob") == ALLOWED
+
+
+def _scenario(start):
+    limiter = RateLimiter()
+    created = start - timedelta(days=30)
+    return [
+        limiter.try_acquire(
+            "alice",
+            "chat",
+            account_created_at=created,
+            now=start + timedelta(seconds=t),
+        )
+        for t in (0, 1, 2, 3, 4, 5, 10)
+    ]
+
+
+def test_decisions_depend_only_on_given_time():
+    early = _scenario(datetime(2001, 1, 1, tzinfo=UTC))
+    late = _scenario(datetime(2999, 1, 1, tzinfo=UTC))
+
+    assert early == late == [ALLOWED] * 5 + [Decision(False, 5.0), ALLOWED]
+
+
+def test_state_lives_in_limiter_instance():
+    first, second = RateLimiter(), RateLimiter()
+    for t in range(5):
+        send(first, "chat", at(t))
+    assert send(first, "chat", at(5)).allowed is False
+
+    assert send(second, "chat", at(5)) == ALLOWED
