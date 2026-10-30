@@ -1,6 +1,6 @@
 """Ограничитель частоты сообщений: лимит на чат и общий лимит пользователя."""
 
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -41,8 +41,9 @@ class Decision:
 class RateLimiter:
     """Решает, можно ли пользователю отправить сообщение, и засчитывает пропущенное.
 
-    Время приходит только параметром now, системные часы не читаются.
-    Не потокобезопасен.
+    Время приходит только параметром now, системные часы не читаются. Вызывающий
+    берёт now с часов сервера прямо в момент вызова: на этом держатся самоочистка
+    журналов и проверка порядка времени. Не потокобезопасен.
     """
 
     def __init__(
@@ -56,7 +57,15 @@ class RateLimiter:
         self._regular = regular
         self._new_account = new_account
         self._new_account_age = new_account_age
-        self._logs: dict[str, deque[tuple[datetime, str]]] = {}
+        # Журнал за самое длинное окно целиком покрывает и окно чата.
+        self._retention = max(
+            regular.chat_window,
+            regular.total_window,
+            new_account.chat_window,
+            new_account.total_window,
+        )
+        # Порядок ключей совпадает с порядком последней записи пользователя.
+        self._logs: OrderedDict[str, deque[tuple[datetime, str]]] = OrderedDict()
 
     def try_acquire(
         self,
@@ -71,16 +80,24 @@ class RateLimiter:
         Отказанное сообщение в лимит не засчитывается. Бросает ValueError, если now
         раньше последнего принятого сообщения этого пользователя.
         """
-        log = self._logs.get(user_id, deque())
-        if log and now < log[-1][0]:
+        known = self._logs.get(user_id)
+        if known and now < known[-1][0]:
             raise ValueError(
                 "now is earlier than the last accepted message of this user"
             )
+        cutoff = now - self._retention
+        # Истёкшие пользователи лежат в голове: журнал с самой давней последней записью.
+        while self._logs and next(iter(self._logs.values()))[-1][0] <= cutoff:
+            self._logs.popitem(last=False)
+        log = self._logs.get(user_id, deque())
+        while log and log[0][0] <= cutoff:
+            log.popleft()
         wait = self._wait(log, chat_id, account_created_at, now)
         if wait > timedelta(0):
             return Decision(False, wait.total_seconds())
         log.append((now, chat_id))
         self._logs[user_id] = log
+        self._logs.move_to_end(user_id)
         return Decision(True, 0.0)
 
     def _wait(

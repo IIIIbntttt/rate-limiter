@@ -264,3 +264,30 @@ def test_time_going_backwards_for_user_raises():
 
     with pytest.raises(ValueError, match="now is earlier than the last accepted"):
         send(limiter, "chat", at(4))
+
+
+def test_user_log_keeps_only_entries_within_longest_window():
+    limiter = RateLimiter()
+    for t in range(0, 600, 5):
+        assert send(limiter, "chat", at(t)) == ALLOWED
+
+    assert len(limiter._logs["alice"]) == 12
+
+
+def test_forgets_users_whose_entries_all_expired():
+    limiter = RateLimiter()
+    send(limiter, "chat", at(0), user="alice")
+    send(limiter, "chat", at(30), user="bob")
+    send(limiter, "chat", at(61), user="carol")
+
+    assert list(limiter._logs) == ["bob", "carol"]
+
+
+def test_active_user_moves_behind_older_users_in_forgetting_order():
+    limiter = RateLimiter()
+    send(limiter, "chat", at(0), user="alice")
+    send(limiter, "chat", at(30), user="bob")
+    send(limiter, "chat", at(50), user="alice")
+    send(limiter, "chat", at(95), user="carol")
+
+    assert list(limiter._logs) == ["alice", "carol"]
