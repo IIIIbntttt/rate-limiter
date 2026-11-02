@@ -31,6 +31,24 @@ if not decision.allowed:
 
 Вызов `try_acquire` сразу решает и засчитывает пропущенное сообщение. Настройки передаются в конструктор: `RateLimiter(regular, new_account, new_account_age)`. Лимиты каждого уровня описывает `Limits(per_chat, chat_window, total, total_window)`.
 
+## Ручной запуск
+
+Командной строки у модуля нет, он подключается как библиотека. Быстрая проверка из корня репозитория, зависимости не нужны (bash или zsh; в Windows наберите тот же код в интерактивном `python`):
+
+```
+python -c "
+from datetime import UTC, datetime
+from rate_limiter import RateLimiter
+
+limiter = RateLimiter()
+created = datetime(2026, 1, 1, tzinfo=UTC)
+for i in range(1, 7):
+    print(i, limiter.try_acquire('alice', 'chat-1', account_created_at=created, now=datetime.now(UTC)))
+"
+```
+
+Первые пять сообщений пройдут (`allowed=True`), шестое получит отказ с `retry_after` около 10 секунд.
+
 ## Тесты
 
 Нужны Python 3.11 или новее (проверено на 3.13), pytest и tzdata (на Windows он нужен тестам с переводом часов):
@@ -39,6 +57,16 @@ if not decision.allowed:
 pip install pytest tzdata
 python -m pytest
 ```
+
+Подробный вывод, выбор тестов по части названия и один тест:
+
+```
+python -m pytest -v
+python -m pytest -k new_account
+python -m pytest test_rate_limiter.py::test_rejects_sixth_message_in_chat_with_exact_wait
+```
+
+С uv ставить зависимости не нужно: `uv run pytest` возьмёт pytest и tzdata из `pyproject.toml`.
 
 ## Что значит retry_after
 
